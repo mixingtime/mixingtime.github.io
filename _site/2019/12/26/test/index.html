@@ -1,0 +1,286 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    
+    <meta charset="utf-8">
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
+    <title>Training Weight Agnostic Neural Networks with Backpropagation &#8211; Mixing Time</title>
+    <link rel="dns-prefetch" href="//fonts.googleapis.com">
+    <link rel="dns-prefetch" href="//fonts.gstatic.com">
+    <link rel="dns-prefetch" href="//maxcdn.bootstrapcdn.com">
+    <link rel="dns-prefetch" href="//cdnjs.cloudflare.com">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="description" content="I train WANNs with Adam and SGD to classify MNIST handwritten digits, and compare the results with those of a black-box optimizer used in &lt;a href=&quot;https://papers.nips.cc/paper/8777-weight-agnostic-neural-networks&quot;&gt;the original paper&lt;/a&gt;.">
+    <meta name="robots" content="all">
+    <meta name="author" content="">
+    
+    <meta name="keywords" content="">
+    <link rel="canonical" href="http://localhost:4000/2019/12/26/test/">
+    <link rel="alternate" type="application/rss+xml" title="RSS Feed for Mixing Time" href="/feed.xml" />
+
+    <!-- Custom CSS -->
+    <link rel="stylesheet" href="/css/pixyll.css?201912281458" type="text/css">
+
+    <!-- Fonts -->
+    
+    <link href='//fonts.googleapis.com/css?family=Merriweather:900,900italic,300,300italic' rel='stylesheet' type='text/css'>
+    <link href='//fonts.googleapis.com/css?family=Lato:900,300' rel='stylesheet' type='text/css'>
+    
+    
+
+    <!-- MathJax -->
+    
+    <script type="text/javascript" async
+        src="//cdnjs.cloudflare.com/ajax/libs/mathjax/2.7.1/MathJax.js?config=TeX-AMS-MML_HTMLorMML">
+    </script>
+    
+
+    <!-- Verifications -->
+    
+    
+
+    <!-- Open Graph -->
+    <!-- From: https://github.com/mmistakes/hpstr-jekyll-theme/blob/master/_includes/head.html -->
+    <meta property="og:locale" content="en_US">
+    <meta property="og:type" content="article">
+    <meta property="og:title" content="Training Weight Agnostic Neural Networks with Backpropagation">
+    <meta property="og:description" content="A blog on machine learning.">
+    <meta property="og:url" content="http://localhost:4000/2019/12/26/test/">
+    <meta property="og:site_name" content="Mixing Time">
+    
+
+    <!-- Twitter Card -->
+    <meta name="twitter:card" content="summary" />
+    
+    <meta name="twitter:title" content="Training Weight Agnostic Neural Networks with Backpropagation" />
+    <meta name="twitter:description" content="I train WANNs with Adam and SGD to classify MNIST handwritten digits, and compare the results with those of a black-box optimizer used in <a href="https://papers.nips.cc/paper/8777-weight-agnostic-neural-networks">the original paper</a>." /> 
+    <meta name="twitter:url" content="http://localhost:4000/2019/12/26/test/" />
+    
+
+    <!-- Icons -->
+    <link rel="apple-touch-icon" sizes="57x57" href="/apple-touch-icon-57x57.png">
+    <link rel="apple-touch-icon" sizes="114x114" href="/apple-touch-icon-114x114.png">
+    <link rel="apple-touch-icon" sizes="72x72" href="/apple-touch-icon-72x72.png">
+    <link rel="apple-touch-icon" sizes="144x144" href="/apple-touch-icon-144x144.png">
+    <link rel="apple-touch-icon" sizes="60x60" href="/apple-touch-icon-60x60.png">
+    <link rel="apple-touch-icon" sizes="120x120" href="/apple-touch-icon-120x120.png">
+    <link rel="apple-touch-icon" sizes="76x76" href="/apple-touch-icon-76x76.png">
+    <link rel="apple-touch-icon" sizes="152x152" href="/apple-touch-icon-152x152.png">
+    <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon-180x180.png">
+    <link rel="icon" type="image/png" href="/favicon-192x192.png" sizes="192x192">
+    <link rel="icon" type="image/png" href="/favicon-160x160.png" sizes="160x160">
+    <link rel="icon" type="image/png" href="/favicon-96x96.png" sizes="96x96">
+    <link rel="icon" type="image/png" href="/favicon-16x16.png" sizes="16x16">
+    <link rel="icon" type="image/png" href="/favicon-32x32.png" sizes="32x32">
+    <link rel="shortcut icon" href="/favicon.ico">
+
+    
+</head>
+
+<body class="site">
+  
+	
+
+  <div class="site-wrap">
+    <header class="site-header px2 px-responsive">
+  <div class="mt2 wrap">
+    <div class="measure">
+      <a href="/" class="site-title">Mixing Time</a>
+      <nav class="site-nav">
+        
+
+
+
+    
+    
+    
+    
+        <a class="nav-link" href="/contact/">Say Hello</a>
+    
+
+    
+
+
+      </nav>
+      <div class="clearfix"></div>
+      
+    </div>
+  </div>
+</header>
+
+
+    <div class="post p2 p-responsive wrap" role="main">
+      <div class="measure">
+        
+
+
+<div class="post-header mb2">
+  <h1>Training Weight Agnostic Neural Networks with Backpropagation</h1>
+  <!--<span class="post-meta">Dec 26, 2019</span><br>-->
+  <p class="post-meta">Dec 26, 2019</p>
+  
+  <!--
+  <span class="post-meta small">
+  
+    6 minute read
+  
+  </span>
+  -->
+</div>
+
+<article class="post-content">
+  <!--
+## Intro
+-->
+
+<p>The recent paper “<a href="https://papers.nips.cc/paper/8777-weight-agnostic-neural-networks">Weight Agnostic Neural Networks</a>” by Gaier and Ha proposes a neural architecture search algorithm that evolves neural networks for solving learning tasks. The search algroithm is inspired by <a href="http://nn.cs.utexas.edu/downloads/papers/stanley.ec02.pdf">NEAT</a>, a popular neuroevolution algorithm. But instead of searching for weight values and network topologies simultaneously as done in NEAT, the WANN evolution procedure searches only for network topologies. Each topology in the search phase is evaluated by the average performance of networks with a range of tied weights (and therefore weight agnostic). More details can be found in the paper which is published <a href="https://papers.nips.cc/paper/8777-weight-agnostic-neural-networks">here</a> and <a href="https://arxiv.org/abs/1906.04358">here</a>, along with a <a href="https://weightagnostic.github.io/">website</a>, a <a href="https://ai.googleblog.com/2019/08/exploring-weight-agnostic-neural.html">blog</a> and <a href="https://github.com/google/brain-tokyo-workshop/tree/master/WANNRelease">open-source code</a>.</p>
+
+<p>WANNs are shown to perform reasonably well on several reinforcement learning tasks even though they’re sparsely connected and use tied weights. 
+The paper further demonstrates the effectiveness of WANNs in classifying MNIST handwritten digits by reformulating the classification task as a reinforcement learning problem. 
+In particular, an ensemble of WANNs with tied weights performs as well as a standard neural network with thousands of parameters. 
+And when trained with a black-box optimizer called PEPG<sup id="fnref:1"><a href="#fn:1" class="footnote">1</a></sup>, a single WANN is able to achieve a respectable test accuracy of 94.2%.</p>
+
+<p>I’m really excited about the paper: it not only speeds up neural architecture search by eliminating the inner optimization loop for weight training, but also brings to light the potential of sparse neural networks with minimal degrees of freedom in weights. I’m also curious that in the MNIST experiment, WANNs are trained with a black-box optimizer instead of the usual backpropagation even though the network architecture is fully differentiable. For this, the paper reports an interesting observation: training WANNs with backpropagation in the classification formulation does not fare as well as 
+PEPG in the reinforcement learning formulation. Unfortunately, I wasn’t able to find more details about this observation, so I decided to test it out myself and present some preliminary results here.</p>
+
+<h2 id="experiment-setup">Experiment setup</h2>
+<p>Let me first describe my experiment setup.</p>
+
+<p>General setup:</p>
+<ul>
+  <li>Dataset: MNIST256, a downsampled and preprocessed version of MNIST provided by the authors of the paper along with <a href="https://github.com/google/brain-tokyo-workshop/tree/master/WANNRelease">their code</a></li>
+  <li>WANN architecture: the same 1849-connection topology as used in the paper and provided by the authors (I’ll call it <em>MNIST-WANN</em> in short)</li>
+  <li>I use <a href="https://github.com/HIPS/autograd">autograd</a> to obtain gradients from MNIST-WANN<sup id="fnref:2"><a href="#fn:2" class="footnote">2</a></sup></li>
+</ul>
+
+<p>Optimizers:<br /></p>
+<ul>
+  <li>Adam: learning rate=0.01, beta1=0.99 and beta2=0.999</li>
+  <li>SGD: learning rate=2.0, momentum=0.9</li>
+</ul>
+
+<p>I’ve only attempted to tune learning rates with all other hyperparameters set by default. The implementation of both optimizers is provided by the authors.</p>
+
+<p>Model training and evaluation:</p>
+<ul>
+  <li>I train MNIST-WANN on the first 50000 samples in the training set, validate it on the remaining 10000 samples in the training set, and test it on the test set that contains 10000 samples</li>
+  <li>For each optimizer, I compute its results as averages of 5 runs with different random seeds unless otherwise specified</li>
+  <li>Loss function: cross-entropy loss</li>
+  <li>Weight initialization: He uniform initialization</li>
+  <li>Minibatch size: 128</li>
+  <li>Epochs: 10</li>
+</ul>
+
+<p>I’m now ready to present my experiment results.</p>
+
+<h2 id="accuracy">Accuracy</h2>
+
+<p>The following plot shows the accuracy of Adam and SGD as training progresses:</p>
+
+<p style="text-align: center;"><img src="/assets/accuracy.png" alt="Training/validation accuracy" /></p>
+
+<p>In the above plot, the upper and lower boundaries of shadows represent the max and min accuracy at each epoch (over 5 runs), respectively. Compared to SGD, Adam enjoys more stability in training and validation accuracy. It appears that the trained MNIST-WANN is underfitting for both optimizers, however, and there seems to be room for improvement.</p>
+
+<p>I summarize the results of the 10th epoch in the table below.
+As you can see, there is a gap between test accuracy of Adam/SGD and PEPG (94.2% as reported in the paper), though we should keep in mind that the MNIST-WANN trained by Adam/SGD is underfitting.</p>
+
+<table>
+  <thead>
+    <tr>
+      <th style="text-align: center">Optimizer</th>
+      <th style="text-align: center">Training</th>
+      <th style="text-align: center">Validation</th>
+      <th style="text-align: center">Testing</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td style="text-align: center">Adam</td>
+      <td style="text-align: center">93.4%</td>
+      <td style="text-align: center">93.9%</td>
+      <td style="text-align: center">93.5%</td>
+    </tr>
+    <tr>
+      <td style="text-align: center">SGD</td>
+      <td style="text-align: center">91.9%</td>
+      <td style="text-align: center">92.8%</td>
+      <td style="text-align: center">92.2%</td>
+    </tr>
+  </tbody>
+</table>
+
+<h2 id="landscape-analysis">Landscape analysis</h2>
+
+<p>I’m also curious about what the solution found by each optimizer looks like. More precisely, I’m interested in the shape of the loss surface around each solution. One simple approach for visualizing a loss surface is to plot a 2D contour described by the following equation:</p>
+
+<script type="math/tex; mode=display">f(\alpha_1, \alpha_2; \sigma) = \cal{L}(\hat{x} + \sigma \alpha_1 \delta_1 + \sigma \alpha_2 \delta_2), \quad \delta_1, \delta_2 \sim \mathcal{N}(\mathrm{0},\mathit{I}),</script>
+
+<p>where</p>
+<ul>
+  <li><script type="math/tex">\cal{L}</script> is the objective value (cross-entropy loss in this case) computed on the training set,</li>
+  <li><script type="math/tex">\hat{x}</script> is the point at which the contour plot is centered (the MNIST-WANN weight parameters optimized by PEPG, Adam or SGD),</li>
+  <li><script type="math/tex">\alpha_1, \alpha_2</script> and <script type="math/tex">\sigma</script> are variables that control our “view” of the landscape (smaller absolute values lead to a smaller neigborhood around <script type="math/tex">\hat{x}</script> and a finer-grained landscape), and</li>
+  <li><script type="math/tex">\delta_1, \delta_2</script> are vectors for perturbing <script type="math/tex">\hat{x}</script> in constructing the landscape; they’re sampled independently from the zero-mean normal distribution with identity covariance matrix.</li>
+</ul>
+
+<p>For Adam and SGD, I choose <script type="math/tex">\hat{x}</script> to be the weights at the 10th epoch of training from one run, and for PEPG I use the weights provided by the authors. I sample the vectors <script type="math/tex">\delta_1, \delta_2</script> only once and fix them for all experiments. Below I plot the function <script type="math/tex">f(\alpha_1, \alpha_2; \sigma)</script> with <script type="math/tex">\alpha_1, \alpha_2 \in \{-1, -0.975, \ldots, 0, \ldots, 0.975, 1\}</script> and <script type="math/tex">\sigma \in \{0.1, 0.2, 0.3, 0.4\}</script> for each of the three optimizers, by varying optimizers across columns and <script type="math/tex">\sigma</script> across rows:</p>
+
+<p style="text-align: center;"><img src="/assets/landscape.png" alt="Landscape" /></p>
+
+<p>The landscapes around solutions of all three optimizers look smooth at <script type="math/tex">\sigma=0.1, 0.2</script>, with those for Adam and SGD taking shape of almost perfect ellipses. As <script type="math/tex">\sigma</script> increases, the landscape for PEPG becomes more “rugged”, whereas those for Adam and SGD remain elliptical (though less perfect than at smaller <script type="math/tex">\sigma</script>’s). It is intriguing that, despite its irregular landscape shape, the solution of PEPG generalizes better than those of Adam and SGD.</p>
+
+<h2 id="discussions">Discussions</h2>
+<p>In this article, I’ve presented some preliminary results for training WANNs with Adam and SGD for classifying MNIST digits. Both optimizers do pretty well, though still falling short compared to PEPG used in the paper. I’ve also studied landscapes around solutions of PEPG/Adam/SGD, and shown that the PEPG solution has an irregular landscape around it while generalizing better.</p>
+
+<p>I think WANNs are very interesting and certainly deserve further exploration.
+For now, the preliminary results shown above suggest that training of MNIST-WANN can be improved by running more epochs, tuning the momentum of SGD, and/or trying other optimizers such as RMSprop. It’d be also interesting to investigate why the PEPG solution produces the rugged landscape in contrast with Adam and SGD.</p>
+
+<p><strong>Acknowledgement</strong>: I’d like to thank the authors of the paper for generously open-sourcing their code.</p>
+
+<hr />
+
+<div class="footnotes">
+  <ol>
+    <li id="fn:1">
+      <p>PEPG used in the paper (also known as population-based REINFORCE therein) is a variant of the algorithm described in <a href="http://citeseerx.ist.psu.edu/viewdoc/download;jsessionid=A64D1AE8313A364B814998E9E245B40A?doi=10.1.1.180.7104&amp;rep=rep1&amp;type=pdf">this paper</a>, which in turn is a black-box optimizer for reinforcement learning. The paper uses an open-source implementation from <a href="https://github.com/hardmaru/estool">estool</a>. <a href="#fnref:1" class="reversefootnote">&#8617;</a></p>
+    </li>
+    <li id="fn:2">
+      <p>It is possible to reimplement WANNs using standard neural network libraries such as PyTorch and Tensorflow. However, I find it most straightforward to use <a href="https://github.com/HIPS/autograd">autograd</a> on top of the existing code: all I need to do is replace some “import numpy as np” statements by “import <span class="blue">autograd</span>.numpy as np” along with minor tweaks. <a href="#fnref:2" class="reversefootnote">&#8617;</a></p>
+    </li>
+  </ol>
+</div>
+
+</article>
+
+
+
+
+
+
+
+
+
+
+
+      </div>
+    </div>
+  </div>
+
+
+  <!--<footer class="center">
+  <div class="measure">
+    <small>
+      Theme crafted with &lt;3 by <a href="http://johnotander.com">John Otander</a> (<a href="https://twitter.com/4lpine">@4lpine</a>).<br>
+      &lt;/&gt; available on <a href="https://github.com/johnotander/pixyll">GitHub</a>.
+    </small>
+  </div>
+</footer>
+
+<script type="text/javascript">
+    if ("serviceWorker" in navigator) {
+      navigator.serviceWorker.register("/sw.js")
+    }
+</script>
+ -->
+</body>
+</html>

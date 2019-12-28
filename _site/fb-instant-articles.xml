@@ -1,0 +1,1096 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns:content="http://purl.org/rss/1.0/modules/content/">
+  <channel>
+    <title></title>
+    <link>http://localhost:4000</link>
+    <description>
+      A blog on machine learning.
+    </description>
+    
+        
+            <item>
+                <title>Training Weight Agnostic Neural Networks with Backpropagation</title>
+                <link>http://localhost:4000/2019/12/28/training-wanns-with-backprop/</link>
+                <content:encoded>
+                    <![CDATA[
+                    <!--
+## Intro
+-->
+
+<p>The recent paper <a href="https://papers.nips.cc/paper/8777-weight-agnostic-neural-networks"><em>Weight Agnostic Neural Networks</em></a> by Gaier and Ha proposes a neural architecture search algorithm that evolves neural networks for solving learning tasks. The search algroithm is inspired by <a href="http://nn.cs.utexas.edu/downloads/papers/stanley.ec02.pdf">NEAT</a>, a popular neuroevolution algorithm. But instead of searching for weight values and network topologies simultaneously as done in NEAT, the WANN evolution procedure searches only for network topologies. Each topology in the search phase is evaluated by the average performance of networks with a range of tied weights (and therefore weight agnostic). More details can be found in the paper which is published <a href="https://papers.nips.cc/paper/8777-weight-agnostic-neural-networks">here</a> and <a href="https://arxiv.org/abs/1906.04358">here</a>, along with a <a href="https://weightagnostic.github.io/">website</a>, a <a href="https://ai.googleblog.com/2019/08/exploring-weight-agnostic-neural.html">blog</a> and <a href="https://github.com/google/brain-tokyo-workshop/tree/master/WANNRelease">open-source code</a>.</p>
+
+<p>WANNs are shown to perform reasonably well on several reinforcement learning tasks even though they’re sparsely connected and use tied weights. 
+The paper further demonstrates the effectiveness of WANNs in classifying MNIST handwritten digits by reformulating the classification task as a reinforcement learning problem. 
+In particular, an ensemble of WANNs with tied weights performs as well as a standard neural network with thousands of parameters. 
+And when trained with a black-box optimizer called PEPG<sup id="fnref:1"><a href="#fn:1" class="footnote">1</a></sup>, a single WANN is able to achieve a respectable test accuracy of 94.2%.</p>
+
+<p>I’m really excited about the paper: it not only speeds up neural architecture search by eliminating the inner optimization loop for weight training, but also brings to light the potential of sparse neural networks with minimal degrees of freedom in weights. I’m also curious that in the MNIST experiment, WANNs are trained with a black-box optimizer instead of the usual backpropagation even though the network architecture is fully differentiable. For this, the paper reports an interesting observation: training WANNs with backpropagation in the classification formulation does not fare as well as 
+PEPG in the reinforcement learning formulation. Unfortunately, I wasn’t able to find more details about this observation, so I decided to test it out myself and present some preliminary results here.</p>
+
+<h2 id="experiment-setup">Experiment setup</h2>
+<p>Let me first describe my experiment setup.</p>
+
+<p>General setup:</p>
+<ul>
+  <li>Dataset: MNIST256, a downsampled and preprocessed version of MNIST provided by the authors of the paper along with <a href="https://github.com/google/brain-tokyo-workshop/tree/master/WANNRelease">their code</a></li>
+  <li>WANN architecture: the same 1849-connection topology as used in the paper and provided by the authors (I’ll call it <em>MNIST-WANN</em> in short)</li>
+  <li>I use <a href="https://github.com/HIPS/autograd">autograd</a> to obtain gradients from MNIST-WANN<sup id="fnref:2"><a href="#fn:2" class="footnote">2</a></sup></li>
+</ul>
+
+<p>Optimizers:<br /></p>
+<ul>
+  <li>Adam: learning rate=0.01, beta1=0.99 and beta2=0.999</li>
+  <li>SGD: learning rate=2.0, momentum=0.9</li>
+</ul>
+
+<p>I’ve only attempted to tune learning rates with all other hyperparameters set by default. The implementation of both optimizers is provided by the authors.</p>
+
+<p>Model training and evaluation:</p>
+<ul>
+  <li>I train MNIST-WANN on the first 50000 samples in the training set, validate it on the remaining 10000 samples in the training set, and test it on the test set that contains 10000 samples</li>
+  <li>For each optimizer, I compute its results as averages of 5 runs with different random seeds unless otherwise specified</li>
+  <li>Loss function: cross-entropy loss</li>
+  <li>Weight initialization: He uniform initialization</li>
+  <li>Minibatch size: 128</li>
+  <li>Epochs: 10</li>
+</ul>
+
+<p>I’m now ready to present my experiment results.</p>
+
+<h2 id="accuracy">Accuracy</h2>
+
+<p>The following plot shows the accuracy of Adam and SGD as training progresses:</p>
+
+<p style="text-align: center;"><img src="/assets/accuracy.png" alt="Training/validation accuracy" /></p>
+
+<p>In the above plot, the upper and lower boundaries of shadows represent the max and min accuracy at each epoch (over 5 runs), respectively. Compared to SGD, Adam enjoys more stability in training and validation accuracy. It appears that the trained MNIST-WANN is underfitting for both optimizers, however, and there seems to be room for improvement.</p>
+
+<p>I summarize the results of the 10th epoch in the table below.
+As you can see, there is a gap between test accuracy of Adam/SGD and PEPG (94.2% as reported in the paper), though we should keep in mind that the MNIST-WANN trained by Adam/SGD is underfitting.</p>
+
+<table>
+  <thead>
+    <tr>
+      <th style="text-align: center">Optimizer</th>
+      <th style="text-align: center">Training</th>
+      <th style="text-align: center">Validation</th>
+      <th style="text-align: center">Testing</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td style="text-align: center">Adam</td>
+      <td style="text-align: center">93.4%</td>
+      <td style="text-align: center">93.9%</td>
+      <td style="text-align: center">93.5%</td>
+    </tr>
+    <tr>
+      <td style="text-align: center">SGD</td>
+      <td style="text-align: center">91.9%</td>
+      <td style="text-align: center">92.8%</td>
+      <td style="text-align: center">92.2%</td>
+    </tr>
+  </tbody>
+</table>
+
+<h2 id="landscape-analysis">Landscape analysis</h2>
+
+<p>I’m also curious about what the solution found by each optimizer looks like. More precisely, I’m interested in the shape of the loss surface around each solution. One simple approach for visualizing a loss surface is to plot a 2D contour described by the following equation:</p>
+
+<script type="math/tex; mode=display">f(\alpha_1, \alpha_2; \sigma) = \cal{L}(\hat{x} + \sigma \alpha_1 \delta_1 + \sigma \alpha_2 \delta_2), \quad \delta_1, \delta_2 \sim \mathcal{N}(\mathrm{0},\mathit{I}),</script>
+
+<p>where</p>
+<ul>
+  <li><script type="math/tex">\cal{L}</script> is the objective value (cross-entropy loss in this case) computed on the training set,</li>
+  <li><script type="math/tex">\hat{x}</script> is the point at which the contour plot is centered (the MNIST-WANN weight parameters optimized by PEPG, Adam or SGD),</li>
+  <li><script type="math/tex">\alpha_1, \alpha_2</script> and <script type="math/tex">\sigma</script> are variables that control our “view” of the landscape (smaller absolute values lead to a smaller neigborhood around <script type="math/tex">\hat{x}</script> and a finer-grained landscape), and</li>
+  <li><script type="math/tex">\delta_1, \delta_2</script> are vectors for perturbing <script type="math/tex">\hat{x}</script> in constructing the landscape; they’re sampled independently from the zero-mean normal distribution with identity covariance matrix.</li>
+</ul>
+
+<p>For Adam and SGD, I choose <script type="math/tex">\hat{x}</script> to be the weights at the 10th epoch of training from one run, and for PEPG I use the weights provided by the authors. I sample the vectors <script type="math/tex">\delta_1, \delta_2</script> only once and fix them for all experiments. Below I plot the function <script type="math/tex">f(\alpha_1, \alpha_2; \sigma)</script> with <script type="math/tex">\alpha_1, \alpha_2 \in \{-1, -0.975, \ldots, 0, \ldots, 0.975, 1\}</script> and <script type="math/tex">\sigma \in \{0.1, 0.2, 0.3, 0.4\}</script> for each of the three optimizers, by varying optimizers across columns and <script type="math/tex">\sigma</script> across rows:</p>
+
+<p style="text-align: center;"><img src="/assets/landscape.png" alt="Landscape" /></p>
+
+<p>The landscapes around solutions of all three optimizers look smooth at <script type="math/tex">\sigma=0.1, 0.2</script>, with those for Adam and SGD taking shape of almost perfect ellipses. As <script type="math/tex">\sigma</script> increases, the landscape for PEPG becomes more “rugged”, whereas those for Adam and SGD remain elliptical (though less perfect than at smaller <script type="math/tex">\sigma</script>’s). It is intriguing that, despite its irregular landscape shape, the solution of PEPG generalizes better than those of Adam and SGD.</p>
+
+<h2 id="discussions">Discussions</h2>
+<p>In this article, I’ve presented some preliminary results for training WANNs with Adam and SGD for classifying MNIST digits. Both optimizers do pretty well, though still falling short compared to PEPG used in the paper. I’ve also studied landscapes around solutions of PEPG/Adam/SGD, and shown that the PEPG solution has an irregular landscape around it while generalizing better.</p>
+
+<p>I think WANNs are very interesting and certainly deserve further exploration.
+For now, the preliminary results shown above suggest that training of MNIST-WANN can be improved by running more epochs, tuning the momentum of SGD, and/or trying other optimizers such as RMSprop. It’d be also interesting to investigate why the PEPG solution produces the rugged landscape in contrast with Adam and SGD.</p>
+
+<p><strong>Acknowledgement</strong>: I’d like to thank the authors of the paper for generously open-sourcing their code.</p>
+
+<hr />
+
+<div class="footnotes">
+  <ol>
+    <li id="fn:1">
+      <p>PEPG used in the paper (also known as population-based REINFORCE therein) is a variant of the algorithm described in <a href="http://citeseerx.ist.psu.edu/viewdoc/download;jsessionid=A64D1AE8313A364B814998E9E245B40A?doi=10.1.1.180.7104&amp;rep=rep1&amp;type=pdf">this paper</a>, which in turn is a black-box optimizer for reinforcement learning. The paper uses an open-source implementation from <a href="https://github.com/hardmaru/estool">estool</a>. <a href="#fnref:1" class="reversefootnote">&#8617;</a></p>
+    </li>
+    <li id="fn:2">
+      <p>It is possible to reimplement WANNs using standard neural network libraries such as PyTorch and Tensorflow. However, I find it most straightforward to use <a href="https://github.com/HIPS/autograd">autograd</a> on top of the existing code: all I need to do is replace some “import numpy as np” statements by “import <span class="blue">autograd</span>.numpy as np” along with minor tweaks. <a href="#fnref:2" class="reversefootnote">&#8617;</a></p>
+    </li>
+  </ol>
+</div>
+
+                    ]]>
+                </content:encoded>
+                <guid isPermaLink="false">/2019/12/28/training-wanns-with-backprop/</guid>
+                <description>
+                    
+                    I train WANNs with Adam and SGD to classify MNIST handwritten digits, and compare the results with those of a black-box optimizer used in &lt;a href='https://papers.nips.cc/paper/8777-weight-agnostic-neural-networks'&gt;the original paper&lt;/a&gt;.
+                    
+                </description>
+                <pubDate>Sat, 28 Dec 2019 00:00:00 -0500</pubDate>
+                <author></author>
+            </item>
+        
+    
+        
+            <item>
+                <title>Update, Training Weight Agnostic Neural Networks with Backpropagation</title>
+                <link>http://localhost:4000/2019/12/26/update/</link>
+                <content:encoded>
+                    <![CDATA[
+                    <p><ins><em>Updates (12/26/19)</em></ins></p>
+
+<p>After writing up this article, I couldn’t wait to run more tests with WANNs. And here I am to give an update.</p>
+
+<p>I’ve tried to train WANN for 20 more epochs (so 30 epochs in total). Below is the training progress over the 30 epochs.</p>
+
+<p style="text-align: center;"><img src="/assets/accuracy.30.png" alt="Training/validation accuracy" /></p>
+
+<p>I summarize the results for Adam at the 29th epoch (which achieves the best validation accuracy) and those for SGD at the 30th epoch, averaged over 5 runs:</p>
+
+<table>
+  <thead>
+    <tr>
+      <th style="text-align: center">Optimizer</th>
+      <th style="text-align: center">Training</th>
+      <th style="text-align: center">Validation</th>
+      <th style="text-align: center">Testing</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td style="text-align: center">Adam</td>
+      <td style="text-align: center">94.2%</td>
+      <td style="text-align: center">94.4%</td>
+      <td style="text-align: center">94.0%</td>
+    </tr>
+    <tr>
+      <td style="text-align: center">SGD</td>
+      <td style="text-align: center">93.0%</td>
+      <td style="text-align: center">93.6%</td>
+      <td style="text-align: center">93.2%</td>
+    </tr>
+  </tbody>
+</table>
+
+<p>It appears that training WANN for more epochs with Adam does help to ameliorate the underfitting issue and improves the test accuracy to 94%, close to the 94.2% of PEPG reported by the WANN paper. The SGD-tuned WANN still underfits even after 30 epochs of training; on the other hand, the gap between training and validation accuracy narrows a bit, and the result becomes more stable after 20 epochs.</p>
+
+<!--
+Some math
+$$\alpha_1$$
+
+Here we go
+statement:\$$ 5 + 5 $$
+
+Here other
+statement:\$$ f(\alpha_1, \alpha_2) = \cal{L}(\hat{x} + \alpha_1 \delta_1 + \alpha_2 \delta_2),$$
+
+Accuracy plot image here:
+{:refdef: style="text-align: center;"}
+![Training/validation accuracy](/assets/accuracy.png)
+{: refdef}
+
+
+Landscape image here:
+
+![Landscape](/assets/landscape.png)
+-->
+
+                    ]]>
+                </content:encoded>
+                <guid isPermaLink="false">/2019/12/26/update/</guid>
+                <description>
+                    
+                    Generic test.
+                    
+                </description>
+                <pubDate>Thu, 26 Dec 2019 00:00:00 -0500</pubDate>
+                <author></author>
+            </item>
+        
+    
+        
+            <item>
+                <title>Training Weight Agnostic Neural Networks with Backpropagation</title>
+                <link>http://localhost:4000/2019/12/26/test/</link>
+                <content:encoded>
+                    <![CDATA[
+                    <!--
+## Intro
+-->
+
+<p>The recent paper “<a href="https://papers.nips.cc/paper/8777-weight-agnostic-neural-networks">Weight Agnostic Neural Networks</a>” by Gaier and Ha proposes a neural architecture search algorithm that evolves neural networks for solving learning tasks. The search algroithm is inspired by <a href="http://nn.cs.utexas.edu/downloads/papers/stanley.ec02.pdf">NEAT</a>, a popular neuroevolution algorithm. But instead of searching for weight values and network topologies simultaneously as done in NEAT, the WANN evolution procedure searches only for network topologies. Each topology in the search phase is evaluated by the average performance of networks with a range of tied weights (and therefore weight agnostic). More details can be found in the paper which is published <a href="https://papers.nips.cc/paper/8777-weight-agnostic-neural-networks">here</a> and <a href="https://arxiv.org/abs/1906.04358">here</a>, along with a <a href="https://weightagnostic.github.io/">website</a>, a <a href="https://ai.googleblog.com/2019/08/exploring-weight-agnostic-neural.html">blog</a> and <a href="https://github.com/google/brain-tokyo-workshop/tree/master/WANNRelease">open-source code</a>.</p>
+
+<p>WANNs are shown to perform reasonably well on several reinforcement learning tasks even though they’re sparsely connected and use tied weights. 
+The paper further demonstrates the effectiveness of WANNs in classifying MNIST handwritten digits by reformulating the classification task as a reinforcement learning problem. 
+In particular, an ensemble of WANNs with tied weights performs as well as a standard neural network with thousands of parameters. 
+And when trained with a black-box optimizer called PEPG<sup id="fnref:1"><a href="#fn:1" class="footnote">1</a></sup>, a single WANN is able to achieve a respectable test accuracy of 94.2%.</p>
+
+<p>I’m really excited about the paper: it not only speeds up neural architecture search by eliminating the inner optimization loop for weight training, but also brings to light the potential of sparse neural networks with minimal degrees of freedom in weights. I’m also curious that in the MNIST experiment, WANNs are trained with a black-box optimizer instead of the usual backpropagation even though the network architecture is fully differentiable. For this, the paper reports an interesting observation: training WANNs with backpropagation in the classification formulation does not fare as well as 
+PEPG in the reinforcement learning formulation. Unfortunately, I wasn’t able to find more details about this observation, so I decided to test it out myself and present some preliminary results here.</p>
+
+<h2 id="experiment-setup">Experiment setup</h2>
+<p>Let me first describe my experiment setup.</p>
+
+<p>General setup:</p>
+<ul>
+  <li>Dataset: MNIST256, a downsampled and preprocessed version of MNIST provided by the authors of the paper along with <a href="https://github.com/google/brain-tokyo-workshop/tree/master/WANNRelease">their code</a></li>
+  <li>WANN architecture: the same 1849-connection topology as used in the paper and provided by the authors (I’ll call it <em>MNIST-WANN</em> in short)</li>
+  <li>I use <a href="https://github.com/HIPS/autograd">autograd</a> to obtain gradients from MNIST-WANN<sup id="fnref:2"><a href="#fn:2" class="footnote">2</a></sup></li>
+</ul>
+
+<p>Optimizers:<br /></p>
+<ul>
+  <li>Adam: learning rate=0.01, beta1=0.99 and beta2=0.999</li>
+  <li>SGD: learning rate=2.0, momentum=0.9</li>
+</ul>
+
+<p>I’ve only attempted to tune learning rates with all other hyperparameters set by default. The implementation of both optimizers is provided by the authors.</p>
+
+<p>Model training and evaluation:</p>
+<ul>
+  <li>I train MNIST-WANN on the first 50000 samples in the training set, validate it on the remaining 10000 samples in the training set, and test it on the test set that contains 10000 samples</li>
+  <li>For each optimizer, I compute its results as averages of 5 runs with different random seeds unless otherwise specified</li>
+  <li>Loss function: cross-entropy loss</li>
+  <li>Weight initialization: He uniform initialization</li>
+  <li>Minibatch size: 128</li>
+  <li>Epochs: 10</li>
+</ul>
+
+<p>I’m now ready to present my experiment results.</p>
+
+<h2 id="accuracy">Accuracy</h2>
+
+<p>The following plot shows the accuracy of Adam and SGD as training progresses:</p>
+
+<p style="text-align: center;"><img src="/assets/accuracy.png" alt="Training/validation accuracy" /></p>
+
+<p>In the above plot, the upper and lower boundaries of shadows represent the max and min accuracy at each epoch (over 5 runs), respectively. Compared to SGD, Adam enjoys more stability in training and validation accuracy. It appears that the trained MNIST-WANN is underfitting for both optimizers, however, and there seems to be room for improvement.</p>
+
+<p>I summarize the results of the 10th epoch in the table below.
+As you can see, there is a gap between test accuracy of Adam/SGD and PEPG (94.2% as reported in the paper), though we should keep in mind that the MNIST-WANN trained by Adam/SGD is underfitting.</p>
+
+<table>
+  <thead>
+    <tr>
+      <th style="text-align: center">Optimizer</th>
+      <th style="text-align: center">Training</th>
+      <th style="text-align: center">Validation</th>
+      <th style="text-align: center">Testing</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td style="text-align: center">Adam</td>
+      <td style="text-align: center">93.4%</td>
+      <td style="text-align: center">93.9%</td>
+      <td style="text-align: center">93.5%</td>
+    </tr>
+    <tr>
+      <td style="text-align: center">SGD</td>
+      <td style="text-align: center">91.9%</td>
+      <td style="text-align: center">92.8%</td>
+      <td style="text-align: center">92.2%</td>
+    </tr>
+  </tbody>
+</table>
+
+<h2 id="landscape-analysis">Landscape analysis</h2>
+
+<p>I’m also curious about what the solution found by each optimizer looks like. More precisely, I’m interested in the shape of the loss surface around each solution. One simple approach for visualizing a loss surface is to plot a 2D contour described by the following equation:</p>
+
+<script type="math/tex; mode=display">f(\alpha_1, \alpha_2; \sigma) = \cal{L}(\hat{x} + \sigma \alpha_1 \delta_1 + \sigma \alpha_2 \delta_2), \quad \delta_1, \delta_2 \sim \mathcal{N}(\mathrm{0},\mathit{I}),</script>
+
+<p>where</p>
+<ul>
+  <li><script type="math/tex">\cal{L}</script> is the objective value (cross-entropy loss in this case) computed on the training set,</li>
+  <li><script type="math/tex">\hat{x}</script> is the point at which the contour plot is centered (the MNIST-WANN weight parameters optimized by PEPG, Adam or SGD),</li>
+  <li><script type="math/tex">\alpha_1, \alpha_2</script> and <script type="math/tex">\sigma</script> are variables that control our “view” of the landscape (smaller absolute values lead to a smaller neigborhood around <script type="math/tex">\hat{x}</script> and a finer-grained landscape), and</li>
+  <li><script type="math/tex">\delta_1, \delta_2</script> are vectors for perturbing <script type="math/tex">\hat{x}</script> in constructing the landscape; they’re sampled independently from the zero-mean normal distribution with identity covariance matrix.</li>
+</ul>
+
+<p>For Adam and SGD, I choose <script type="math/tex">\hat{x}</script> to be the weights at the 10th epoch of training from one run, and for PEPG I use the weights provided by the authors. I sample the vectors <script type="math/tex">\delta_1, \delta_2</script> only once and fix them for all experiments. Below I plot the function <script type="math/tex">f(\alpha_1, \alpha_2; \sigma)</script> with <script type="math/tex">\alpha_1, \alpha_2 \in \{-1, -0.975, \ldots, 0, \ldots, 0.975, 1\}</script> and <script type="math/tex">\sigma \in \{0.1, 0.2, 0.3, 0.4\}</script> for each of the three optimizers, by varying optimizers across columns and <script type="math/tex">\sigma</script> across rows:</p>
+
+<p style="text-align: center;"><img src="/assets/landscape.png" alt="Landscape" /></p>
+
+<p>The landscapes around solutions of all three optimizers look smooth at <script type="math/tex">\sigma=0.1, 0.2</script>, with those for Adam and SGD taking shape of almost perfect ellipses. As <script type="math/tex">\sigma</script> increases, the landscape for PEPG becomes more “rugged”, whereas those for Adam and SGD remain elliptical (though less perfect than at smaller <script type="math/tex">\sigma</script>’s). It is intriguing that, despite its irregular landscape shape, the solution of PEPG generalizes better than those of Adam and SGD.</p>
+
+<h2 id="discussions">Discussions</h2>
+<p>In this article, I’ve presented some preliminary results for training WANNs with Adam and SGD for classifying MNIST digits. Both optimizers do pretty well, though still falling short compared to PEPG used in the paper. I’ve also studied landscapes around solutions of PEPG/Adam/SGD, and shown that the PEPG solution has an irregular landscape around it while generalizing better.</p>
+
+<p>I think WANNs are very interesting and certainly deserve further exploration.
+For now, the preliminary results shown above suggest that training of MNIST-WANN can be improved by running more epochs, tuning the momentum of SGD, and/or trying other optimizers such as RMSprop. It’d be also interesting to investigate why the PEPG solution produces the rugged landscape in contrast with Adam and SGD.</p>
+
+<p><strong>Acknowledgement</strong>: I’d like to thank the authors of the paper for generously open-sourcing their code.</p>
+
+<hr />
+
+<div class="footnotes">
+  <ol>
+    <li id="fn:1">
+      <p>PEPG used in the paper (also known as population-based REINFORCE therein) is a variant of the algorithm described in <a href="http://citeseerx.ist.psu.edu/viewdoc/download;jsessionid=A64D1AE8313A364B814998E9E245B40A?doi=10.1.1.180.7104&amp;rep=rep1&amp;type=pdf">this paper</a>, which in turn is a black-box optimizer for reinforcement learning. The paper uses an open-source implementation from <a href="https://github.com/hardmaru/estool">estool</a>. <a href="#fnref:1" class="reversefootnote">&#8617;</a></p>
+    </li>
+    <li id="fn:2">
+      <p>It is possible to reimplement WANNs using standard neural network libraries such as PyTorch and Tensorflow. However, I find it most straightforward to use <a href="https://github.com/HIPS/autograd">autograd</a> on top of the existing code: all I need to do is replace some “import numpy as np” statements by “import <span class="blue">autograd</span>.numpy as np” along with minor tweaks. <a href="#fnref:2" class="reversefootnote">&#8617;</a></p>
+    </li>
+  </ol>
+</div>
+
+                    ]]>
+                </content:encoded>
+                <guid isPermaLink="false">/2019/12/26/test/</guid>
+                <description>
+                    
+                    I train WANNs with Adam and SGD to classify MNIST handwritten digits, and compare the results with those of a black-box optimizer used in &lt;a href=&quot;https://papers.nips.cc/paper/8777-weight-agnostic-neural-networks&quot;&gt;the original paper&lt;/a&gt;.
+                    
+                </description>
+                <pubDate>Thu, 26 Dec 2019 00:00:00 -0500</pubDate>
+                <author></author>
+            </item>
+        
+    
+        
+            <item>
+                <title>Testing Pixyll</title>
+                <link>http://localhost:4000/jekyll/pixyll/2019/06/10/test-pixyll-in-action/</link>
+                <content:encoded>
+                    <![CDATA[
+                    <p>There is a significant amount of subtle, yet precisely calibrated, styling to ensure
+that your content is emphasized while still looking aesthetically pleasing.</p>
+
+<p>All links are easy to <a href="#">locate and discern</a>, yet don’t detract from the <a href="#">harmony
+of a paragraph</a>. The <em>same</em> goes for italics and <strong>bold</strong> elements. Even the the strikeout
+works if <del>for some reason you need to update your post</del>. For consistency’s sake,
+<ins>The same goes for insertions</ins>, of course.</p>
+
+<h3 id="code-with-syntax-highlighting">Code, with syntax highlighting</h3>
+
+<p>Here’s an example of some ruby code with line anchors.</p>
+
+<figure class="highlight"><pre><code class="language-ruby" data-lang="ruby"><span class="c1"># The most awesome of classes
+</span>
+<span class="k">class</span> <span class="nc">Awesome</span> <span class="o">&lt;</span> <span class="no">ActiveRecord</span><span class="o">::</span><span class="no">Base</span>
+  <span class="kp">include</span> <span class="no">EvenMoreAwesome</span>
+
+  <span class="n">validates_presence_of</span> <span class="ss">:something</span>
+  <span class="n">validates</span> <span class="ss">:email</span><span class="p">,</span> <span class="ss">email_format: </span><span class="kp">true</span>
+
+  <span class="k">def</span> <span class="nf">initialize</span><span class="p">(</span><span class="n">email</span><span class="p">,</span> <span class="nb">name</span> <span class="o">=</span> <span class="kp">nil</span><span class="p">)</span>
+    <span class="nb">self</span><span class="p">.</span><span class="nf">email</span> <span class="o">=</span> <span class="n">email</span>
+    <span class="nb">self</span><span class="p">.</span><span class="nf">name</span> <span class="o">=</span> <span class="nb">name</span>
+    <span class="nb">self</span><span class="p">.</span><span class="nf">favorite_number</span> <span class="o">=</span> <span class="mi">12</span>
+    <span class="nb">puts</span> <span class="s1">'created awesomeness'</span>
+  <span class="k">end</span>
+
+  <span class="k">def</span> <span class="nf">email_format</span>
+    <span class="n">email</span> <span class="o">=~</span> <span class="sr">/\S+@\S+\.\S+/</span>
+  <span class="k">end</span>
+<span class="k">end</span></code></pre></figure>
+
+<p>Here’s some CSS:</p>
+
+<figure class="highlight"><pre><code class="language-css" data-lang="css"><span class="nc">.foobar</span> <span class="p">{</span>
+  <span class="c">/* Named colors rule */</span>
+  <span class="nl">color</span><span class="p">:</span> <span class="no">tomato</span><span class="p">;</span>
+<span class="p">}</span></code></pre></figure>
+
+<p>Here’s some JavaScript:</p>
+
+<figure class="highlight"><pre><code class="language-js" data-lang="js"><span class="kd">var</span> <span class="nx">isPresent</span> <span class="o">=</span> <span class="nx">require</span><span class="p">(</span><span class="dl">'</span><span class="s1">is-present</span><span class="dl">'</span><span class="p">)</span>
+
+<span class="nx">module</span><span class="p">.</span><span class="nx">exports</span> <span class="o">=</span> <span class="kd">function</span> <span class="nx">doStuff</span><span class="p">(</span><span class="nx">things</span><span class="p">)</span> <span class="p">{</span>
+  <span class="k">if</span> <span class="p">(</span><span class="nx">isPresent</span><span class="p">(</span><span class="nx">things</span><span class="p">))</span> <span class="p">{</span>
+    <span class="nx">doOtherStuff</span><span class="p">(</span><span class="nx">things</span><span class="p">)</span>
+  <span class="p">}</span>
+<span class="p">}</span></code></pre></figure>
+
+<p>Here’s some HTML:</p>
+
+<figure class="highlight"><pre><code class="language-html" data-lang="html"><span class="nt">&lt;div</span> <span class="na">class=</span><span class="s">"m0 p0 bg-blue white"</span><span class="nt">&gt;</span>
+  <span class="nt">&lt;h3</span> <span class="na">class=</span><span class="s">"h1"</span><span class="nt">&gt;</span>Hello, world!<span class="nt">&lt;/h3&gt;</span>
+<span class="nt">&lt;/div&gt;</span></code></pre></figure>
+
+<h1 id="headings">Headings!</h1>
+
+<p>They’re responsive, and well-proportioned (in <code class="highlighter-rouge">padding</code>, <code class="highlighter-rouge">line-height</code>, <code class="highlighter-rouge">margin</code>, and <code class="highlighter-rouge">font-size</code>).
+They also heavily rely on the awesome utility, <a href="http://www.basscss.com/">BASSCSS</a>.</p>
+
+<h5 id="they-draw-the-perfect-amount-of-attention">They draw the perfect amount of attention</h5>
+
+<p>This allows your content to have the proper informational and contextual hierarchy. Yay.</p>
+
+<h3 id="there-are-lists-too">There are lists, too</h3>
+
+<ul>
+  <li>Apples</li>
+  <li>Oranges</li>
+  <li>Potatoes</li>
+  <li>Milk</li>
+</ul>
+
+<ol>
+  <li>Mow the lawn</li>
+  <li>Feed the dog</li>
+  <li>Dance</li>
+</ol>
+
+<h3 id="images-look-great-too">Images look great, too</h3>
+
+<p><img src="https://cloud.githubusercontent.com/assets/1424573/3378137/abac6d7c-fbe6-11e3-8e09-55745b6a8176.png" alt="desk" /></p>
+
+<p><em><img src="https://cloud.githubusercontent.com/assets/1424573/3378137/abac6d7c-fbe6-11e3-8e09-55745b6a8176.png" alt="desk" /></em></p>
+
+<h3 id="there-are-also-pretty-colors">There are also pretty colors</h3>
+
+<p>Also the result of <a href="http://www.basscss.com/">BASSCSS</a>, you can <span class="bg-dark-gray white">highlight</span> certain components
+of a <span class="red">post</span> <span class="mid-gray">with</span> <span class="green">CSS</span> <span class="orange">classes</span>.</p>
+
+<p>I don’t recommend using blue, though. It looks like a <span class="blue">link</span>.</p>
+
+<h3 id="footnotes">Footnotes!</h3>
+
+<p>Markdown footnotes are supported, and they look great! Simply put e.g. <code class="highlighter-rouge">[^1]</code> where you want the footnote to appear,<sup id="fnref:1"><a href="#fn:1" class="footnote">1</a></sup> and then add
+the reference at the end of your markdown.</p>
+
+<h3 id="stylish-blockquotes-included">Stylish blockquotes included</h3>
+
+<p>You can use the markdown quote syntax, <code class="highlighter-rouge">&gt;</code> for simple quotes.</p>
+
+<blockquote>
+  <p>Lorem ipsum dolor sit amet, consectetur adipiscing elit. Suspendisse quis porta mauris.</p>
+</blockquote>
+
+<p>However, you need to inject html if you’d like a citation footer. I will be working on a way to
+hopefully sidestep this inconvenience.</p>
+
+<blockquote>
+  <p>
+    Perfection is achieved, not when there is nothing more to add, but when there is nothing left to take away.
+  </p>
+  <footer><cite title="Antoine de Saint-Exupéry">Antoine de Saint-Exupéry</cite></footer>
+</blockquote>
+
+<h3 id="tables">Tables</h3>
+
+<p>Tables represent tabular data and can be built using markdown syntax.  They are rendered responsively in Pixyll for a variety of screen widths.</p>
+
+<p>Here’s a simple example of a table:</p>
+
+<table>
+  <thead>
+    <tr>
+      <th>Quantity</th>
+      <th>Description</th>
+      <th style="text-align: right">Price</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>2</td>
+      <td>Orange</td>
+      <td style="text-align: right">$0.99</td>
+    </tr>
+    <tr>
+      <td>1</td>
+      <td>Pineapple</td>
+      <td style="text-align: right">$2.99</td>
+    </tr>
+    <tr>
+      <td>4</td>
+      <td>Banana</td>
+      <td style="text-align: right">$0.39</td>
+    </tr>
+  </tbody>
+  <tfoot>
+    <tr>
+      <td> </td>
+      <td><strong>Total</strong></td>
+      <td style="text-align: right"><strong>$6.14</strong></td>
+    </tr>
+  </tfoot>
+</table>
+
+<p>A table must have a body of one or more rows, but can optionally also have a header or footer.</p>
+
+<p>The cells in a column, including the header row cell, can either be aligned:</p>
+
+<ul>
+  <li>left,</li>
+  <li>right or</li>
+  <li>center.</li>
+</ul>
+
+<p>Most inline text formatting is available in table cells, block-level formatting are not.</p>
+
+<table>
+  <thead>
+    <tr>
+      <th>Default header</th>
+      <th style="text-align: left">Left header</th>
+      <th style="text-align: center">Center header</th>
+      <th style="text-align: right">Right header</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>Default</td>
+      <td style="text-align: left">Left</td>
+      <td style="text-align: center">Center</td>
+      <td style="text-align: right">Right</td>
+    </tr>
+    <tr>
+      <td><em>Italic</em></td>
+      <td style="text-align: left"><strong>Bold</strong></td>
+      <td style="text-align: center"><strong><em>Bold italic</em></strong></td>
+      <td style="text-align: right"><code class="highlighter-rouge">monospace</code></td>
+    </tr>
+    <tr>
+      <td><a href="#">link text</a></td>
+      <td style="text-align: left"><code class="highlighter-rouge">code</code></td>
+      <td style="text-align: center"><del>Strikeout</del></td>
+      <td style="text-align: right"><ins>Insertion<ins></ins></ins></td>
+    </tr>
+    <tr>
+      <td>line<br />break</td>
+      <td style="text-align: left">“Smart quotes”</td>
+      <td style="text-align: center"><mark>highlight</mark></td>
+      <td style="text-align: right"><span class="green">green</span></td>
+    </tr>
+    <tr>
+      <td>Footnote<sup id="fnref:2"><a href="#fn:2" class="footnote">2</a></sup></td>
+      <td style="text-align: left"><sub>subscript</sub></td>
+      <td style="text-align: center"><sup>superscript</sup></td>
+      <td style="text-align: right"><span class="red">red</span></td>
+    </tr>
+  </tbody>
+  <tfoot>
+    <tr>
+      <td>Footer row</td>
+      <td style="text-align: left"> </td>
+      <td style="text-align: center"> </td>
+      <td style="text-align: right"> </td>
+    </tr>
+  </tfoot>
+</table>
+
+<h3 id="theres-more-being-added-all-the-time">There’s more being added all the time</h3>
+
+<p>Checkout the <a href="https://github.com/johnotander/pixyll">Github repository</a> to request,
+or add, features.</p>
+
+<p>Happy writing.</p>
+
+<hr />
+
+<div class="footnotes">
+  <ol>
+    <li id="fn:1">
+      <p>Important information that may distract from the main text can go in footnotes. <a href="#fnref:1" class="reversefootnote">&#8617;</a></p>
+    </li>
+    <li id="fn:2">
+      <p>Footnotes will work in tables since they’re just links. <a href="#fnref:2" class="reversefootnote">&#8617;</a></p>
+    </li>
+  </ol>
+</div>
+
+                    ]]>
+                </content:encoded>
+                <guid isPermaLink="false">/jekyll/pixyll/2019/06/10/test-pixyll-in-action/</guid>
+                <description>
+                    
+                    See what the different elements looks like. Your markdown has never looked better. I promise.
+                    
+                </description>
+                <pubDate>Mon, 10 Jun 2019 08:31:19 -0400</pubDate>
+                <author></author>
+            </item>
+        
+    
+        
+            <item>
+                <title>Guide to Forking Pixyll</title>
+                <link>http://localhost:4000/jekyll/pixyll/2019/01/26/guide-to-forking-pixyll/</link>
+                <content:encoded>
+                    <![CDATA[
+                    <p>The following is an overview to copying and sharing Pixyll.<sup id="fnref:1"><a href="#fn:1" class="footnote">1</a></sup></p>
+
+<p>Most people have an understanding of what the copyright and licensing obligations are for source code, but not everyone has practical experience.  There is a lot of information about how to use free and open source source code generally, but not necessarily how it works specifically.</p>
+
+<h2 id="basics">Basics</h2>
+
+<p>Pixyll is free and open source software under the MIT license, a <em>permissive license</em>.  You can use Pixyll without charge and it is provided to you, “as is”, without warranty of any kind.</p>
+
+<p>These are some of the rights for Pixyll since it is under the MIT license:<sup id="fnref:2"><a href="#fn:2" class="footnote">2</a></sup></p>
+
+<ol>
+  <li>You can <strong>copy</strong> Pixyll by forking it on GitHub or by any other means of copying.</li>
+  <li>You can <strong>use</strong> Pixyll to publish your site without restriction or limitation.</li>
+  <li>You can <strong>change</strong> Pixyll as you wish, and you can publish your site with a modified version of Pixyll.</li>
+  <li>You can also <strong>distribute</strong> copies of Pixyll to other people.</li>
+  <li>You can also <strong>distribute modified</strong> copies of Pixyll.</li>
+</ol>
+
+<p>Other rights you have of Pixyll under the MIT license:</p>
+
+<ul>
+  <li>You can <strong>sell</strong> copies of Pixyll, including copies you have modified.</li>
+  <li>You can <strong>combine</strong> Pixyll with other works that are under the MIT license, or other permissive licenses, a copyleft license or a proprietary license.  Pixyll already does this itself by using Jekyll, Ruby and other dependencies.</li>
+  <li>You can distribute copies of Pixyll to others under either the MIT license or you can <strong>relicense</strong> Pixyll under another license.  This includes a different permissive license, a copyleft license or a proprietary license.</li>
+</ul>
+
+<p>Your only responsibility is to preserve both the copyright notices of Pixyll and the MIT license in your copy or modified work.</p>
+
+<h2 id="how-to">How to</h2>
+
+<p>If you’ve modified Pixyll significantly and want to share your version, especially public copies of the code, then there are a few items you should do.</p>
+
+<ol>
+  <li>You should probably <strong>rename</strong> your fork of Pixyll with a different name.</li>
+  <li>A new name isn’t required by the MIT license, but it is good etiquette.<sup id="fnref:3"><a href="#fn:3" class="footnote">3</a></sup></li>
+  <li>You should add your name to the <strong>copyright</strong> of your version, and you should preserve the existing copyrights of Pixyll.</li>
+  <li>Maintaining the copyright notices isn’t required of the MIT license, but it is suggested by the license and is a good practice for documenting the copyrights of your derived work.</li>
+</ol>
+
+<p>The items above do not apply when you just copied and modified Pixyll in small ways to just publish your site and you have no plans to fork Pixyll under a different name.</p>
+
+<p>If you want to publish a fork of Pixyll under a different name but keeping it under the MIT license, then you should add your name to the copyright notices:</p>
+
+<div class="highlighter-rouge"><div class="highlight"><pre class="highlight"><code>Copyright (c) 2019 Your Name
+Copyright (c) 2014-2019 John Otander for Pixyll
+</code></pre></div></div>
+
+<p>However, if you want to publish a fork of Pixyll under a different name <em>and</em> a different license, then you should should still add your name to the copyright notices but have a section titled “Pixyll” at the bottom of your LICENSE file that preserves the copyright and license notices for Pixyll:</p>
+
+<div class="highlighter-rouge"><div class="highlight"><pre class="highlight"><code>Pixyll
+
+Copyright (c) 2014-2019 John Otander
+
+MIT License
+
+Permission is hereby granted, [...]
+</code></pre></div></div>
+
+<p>If you are just modifying Pixyll in small ways to customize your site, you are not obligated to maintain the copyright notices of Pixyll on your site.  However, if you want to credit the Pixyll theme that would be appreciated, see section on “Pixyll Plug” in the README file that came with Pixyll.</p>
+
+<p>Thanks for using Pixyll, and happy hacking!</p>
+
+<hr />
+<div class="footnotes">
+  <ol>
+    <li id="fn:1">
+      <p><strong>Disclaimer</strong>: This material is for informational purposes only, and should not be construed as legal advice or opinion.  For actual legal advice, you should consult with professional legal services. <a href="#fnref:1" class="reversefootnote">&#8617;</a></p>
+    </li>
+    <li id="fn:2">
+      <p>This list of privileges are derived from the four freedoms of “The Free Software Definition” published by the GNU project <a href="https://www.gnu.org/philosophy/free-sw.en.html">https://www.gnu.org/philosophy/free-sw.en.html</a>. <a href="#fnref:2" class="reversefootnote">&#8617;</a></p>
+    </li>
+    <li id="fn:3">
+      <p>Using a different name from “Pixyll” for your derivate work helps avoid misdirected questions from people who are using your version.  It’s similar to using version numbers to discrimate the revisions of software when troubleshooting issues. <a href="#fnref:3" class="reversefootnote">&#8617;</a></p>
+    </li>
+  </ol>
+</div>
+
+                    ]]>
+                </content:encoded>
+                <guid isPermaLink="false">/jekyll/pixyll/2019/01/26/guide-to-forking-pixyll/</guid>
+                <description>
+                    
+                    Pixyll is available to you under the MIT license.
+                    
+                </description>
+                <pubDate>Sat, 26 Jan 2019 19:22:00 -0500</pubDate>
+                <author></author>
+            </item>
+        
+    
+        
+            <item>
+                <title>Announcing Version 2.0</title>
+                <link>http://localhost:4000/jekyll/pixyll/2015/07/11/announcing-pixyll-version-2/</link>
+                <content:encoded>
+                    <![CDATA[
+                    <p>In an effort to make Pixyll easier to customize and more aesthetically pleasing, we’ve released version <code class="highlighter-rouge">2.0</code>.</p>
+
+<p>Pixyll now features:</p>
+
+<ul>
+  <li>Line anchors in code blocks and new syntax highlighting</li>
+  <li>A customizable variables file</li>
+  <li>Modular, and lighter weight CSS</li>
+  <li>No more <code class="highlighter-rouge">max-width</code> media queries</li>
+</ul>
+
+                    ]]>
+                </content:encoded>
+                <guid isPermaLink="false">/jekyll/pixyll/2015/07/11/announcing-pixyll-version-2/</guid>
+                <description>
+                    
+                    Now, Pixyll is lighter weight and more customizable than before.
+                    
+                </description>
+                <pubDate>Sat, 11 Jul 2015 00:00:00 -0400</pubDate>
+                <author></author>
+            </item>
+        
+    
+        
+            <item>
+                <title>Hello, Pixyll</title>
+                <link>http://localhost:4000/jekyll/pixyll/2014/06/11/welcome-to-pixyll/</link>
+                <content:encoded>
+                    <![CDATA[
+                    <p>Hello.</p>
+
+<p>Pixyll is a simple, beautiful theme for Jekyll that emphasizes content rather than aesthetic fluff. It’s mobile <em>first</em>, fluidly responsive, and delightfully lightweight.</p>
+
+<p>It’s pretty minimal, but leverages large type and drastic contrast to make a statement, on all devices.</p>
+
+<blockquote>
+  <p>
+    Perfection is achieved, not when there is nothing more to add, but when there is nothing left to take away.
+  </p>
+  <footer><cite title="Antoine de Saint-Exupéry">Antoine de Saint-Exupéry</cite></footer>
+</blockquote>
+
+<h2 id="where-is-it">Where is it?</h2>
+
+<p>Checkout the <a href="https://github.com/johnotander/pixyll">Github repository</a> to download it, request a feature, or report a bug.</p>
+
+<p>It’s free, and open source (<a href="http://opensource.org/licenses/MIT">MIT</a>).</p>
+
+                    ]]>
+                </content:encoded>
+                <guid isPermaLink="false">/jekyll/pixyll/2014/06/11/welcome-to-pixyll/</guid>
+                <description>
+                    
+                    Pixyll is a simple, beautiful theme for Jekyll that emphasizes content rather than aesthetic fluff.
+                    
+                </description>
+                <pubDate>Wed, 11 Jun 2014 11:31:19 -0400</pubDate>
+                <author></author>
+            </item>
+        
+    
+        
+            <item>
+                <title>Pixyll in Action</title>
+                <link>http://localhost:4000/jekyll/pixyll/2014/06/10/see-pixyll-in-action/</link>
+                <content:encoded>
+                    <![CDATA[
+                    <p>There is a significant amount of subtle, yet precisely calibrated, styling to ensure
+that your content is emphasized while still looking aesthetically pleasing.</p>
+
+<p>All links are easy to <a href="#">locate and discern</a>, yet don’t detract from the <a href="#">harmony
+of a paragraph</a>. The <em>same</em> goes for italics and <strong>bold</strong> elements. Even the the strikeout
+works if <del>for some reason you need to update your post</del>. For consistency’s sake,
+<ins>The same goes for insertions</ins>, of course.</p>
+
+<h3 id="code-with-syntax-highlighting">Code, with syntax highlighting</h3>
+
+<p>Here’s an example of some ruby code with line anchors.</p>
+
+<figure class="highlight"><pre><code class="language-ruby" data-lang="ruby"><span class="c1"># The most awesome of classes
+</span>
+<span class="k">class</span> <span class="nc">Awesome</span> <span class="o">&lt;</span> <span class="no">ActiveRecord</span><span class="o">::</span><span class="no">Base</span>
+  <span class="kp">include</span> <span class="no">EvenMoreAwesome</span>
+
+  <span class="n">validates_presence_of</span> <span class="ss">:something</span>
+  <span class="n">validates</span> <span class="ss">:email</span><span class="p">,</span> <span class="ss">email_format: </span><span class="kp">true</span>
+
+  <span class="k">def</span> <span class="nf">initialize</span><span class="p">(</span><span class="n">email</span><span class="p">,</span> <span class="nb">name</span> <span class="o">=</span> <span class="kp">nil</span><span class="p">)</span>
+    <span class="nb">self</span><span class="p">.</span><span class="nf">email</span> <span class="o">=</span> <span class="n">email</span>
+    <span class="nb">self</span><span class="p">.</span><span class="nf">name</span> <span class="o">=</span> <span class="nb">name</span>
+    <span class="nb">self</span><span class="p">.</span><span class="nf">favorite_number</span> <span class="o">=</span> <span class="mi">12</span>
+    <span class="nb">puts</span> <span class="s1">'created awesomeness'</span>
+  <span class="k">end</span>
+
+  <span class="k">def</span> <span class="nf">email_format</span>
+    <span class="n">email</span> <span class="o">=~</span> <span class="sr">/\S+@\S+\.\S+/</span>
+  <span class="k">end</span>
+<span class="k">end</span></code></pre></figure>
+
+<p>Here’s some CSS:</p>
+
+<figure class="highlight"><pre><code class="language-css" data-lang="css"><span class="nc">.foobar</span> <span class="p">{</span>
+  <span class="c">/* Named colors rule */</span>
+  <span class="nl">color</span><span class="p">:</span> <span class="no">tomato</span><span class="p">;</span>
+<span class="p">}</span></code></pre></figure>
+
+<p>Here’s some JavaScript:</p>
+
+<figure class="highlight"><pre><code class="language-js" data-lang="js"><span class="kd">var</span> <span class="nx">isPresent</span> <span class="o">=</span> <span class="nx">require</span><span class="p">(</span><span class="dl">'</span><span class="s1">is-present</span><span class="dl">'</span><span class="p">)</span>
+
+<span class="nx">module</span><span class="p">.</span><span class="nx">exports</span> <span class="o">=</span> <span class="kd">function</span> <span class="nx">doStuff</span><span class="p">(</span><span class="nx">things</span><span class="p">)</span> <span class="p">{</span>
+  <span class="k">if</span> <span class="p">(</span><span class="nx">isPresent</span><span class="p">(</span><span class="nx">things</span><span class="p">))</span> <span class="p">{</span>
+    <span class="nx">doOtherStuff</span><span class="p">(</span><span class="nx">things</span><span class="p">)</span>
+  <span class="p">}</span>
+<span class="p">}</span></code></pre></figure>
+
+<p>Here’s some HTML:</p>
+
+<figure class="highlight"><pre><code class="language-html" data-lang="html"><span class="nt">&lt;div</span> <span class="na">class=</span><span class="s">"m0 p0 bg-blue white"</span><span class="nt">&gt;</span>
+  <span class="nt">&lt;h3</span> <span class="na">class=</span><span class="s">"h1"</span><span class="nt">&gt;</span>Hello, world!<span class="nt">&lt;/h3&gt;</span>
+<span class="nt">&lt;/div&gt;</span></code></pre></figure>
+
+<h1 id="headings">Headings!</h1>
+
+<p>They’re responsive, and well-proportioned (in <code class="highlighter-rouge">padding</code>, <code class="highlighter-rouge">line-height</code>, <code class="highlighter-rouge">margin</code>, and <code class="highlighter-rouge">font-size</code>).
+They also heavily rely on the awesome utility, <a href="http://www.basscss.com/">BASSCSS</a>.</p>
+
+<h5 id="they-draw-the-perfect-amount-of-attention">They draw the perfect amount of attention</h5>
+
+<p>This allows your content to have the proper informational and contextual hierarchy. Yay.</p>
+
+<h3 id="there-are-lists-too">There are lists, too</h3>
+
+<ul>
+  <li>Apples</li>
+  <li>Oranges</li>
+  <li>Potatoes</li>
+  <li>Milk</li>
+</ul>
+
+<ol>
+  <li>Mow the lawn</li>
+  <li>Feed the dog</li>
+  <li>Dance</li>
+</ol>
+
+<h3 id="images-look-great-too">Images look great, too</h3>
+
+<p><img src="https://cloud.githubusercontent.com/assets/1424573/3378137/abac6d7c-fbe6-11e3-8e09-55745b6a8176.png" alt="desk" /></p>
+
+<p><em><img src="https://cloud.githubusercontent.com/assets/1424573/3378137/abac6d7c-fbe6-11e3-8e09-55745b6a8176.png" alt="desk" /></em></p>
+
+<h3 id="there-are-also-pretty-colors">There are also pretty colors</h3>
+
+<p>Also the result of <a href="http://www.basscss.com/">BASSCSS</a>, you can <span class="bg-dark-gray white">highlight</span> certain components
+of a <span class="red">post</span> <span class="mid-gray">with</span> <span class="green">CSS</span> <span class="orange">classes</span>.</p>
+
+<p>I don’t recommend using blue, though. It looks like a <span class="blue">link</span>.</p>
+
+<h3 id="footnotes">Footnotes!</h3>
+
+<p>Markdown footnotes are supported, and they look great! Simply put e.g. <code class="highlighter-rouge">[^1]</code> where you want the footnote to appear,<sup id="fnref:1"><a href="#fn:1" class="footnote">1</a></sup> and then add
+the reference at the end of your markdown.</p>
+
+<h3 id="stylish-blockquotes-included">Stylish blockquotes included</h3>
+
+<p>You can use the markdown quote syntax, <code class="highlighter-rouge">&gt;</code> for simple quotes.</p>
+
+<blockquote>
+  <p>Lorem ipsum dolor sit amet, consectetur adipiscing elit. Suspendisse quis porta mauris.</p>
+</blockquote>
+
+<p>However, you need to inject html if you’d like a citation footer. I will be working on a way to
+hopefully sidestep this inconvenience.</p>
+
+<blockquote>
+  <p>
+    Perfection is achieved, not when there is nothing more to add, but when there is nothing left to take away.
+  </p>
+  <footer><cite title="Antoine de Saint-Exupéry">Antoine de Saint-Exupéry</cite></footer>
+</blockquote>
+
+<h3 id="tables">Tables</h3>
+
+<p>Tables represent tabular data and can be built using markdown syntax.  They are rendered responsively in Pixyll for a variety of screen widths.</p>
+
+<p>Here’s a simple example of a table:</p>
+
+<table>
+  <thead>
+    <tr>
+      <th>Quantity</th>
+      <th>Description</th>
+      <th style="text-align: right">Price</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>2</td>
+      <td>Orange</td>
+      <td style="text-align: right">$0.99</td>
+    </tr>
+    <tr>
+      <td>1</td>
+      <td>Pineapple</td>
+      <td style="text-align: right">$2.99</td>
+    </tr>
+    <tr>
+      <td>4</td>
+      <td>Banana</td>
+      <td style="text-align: right">$0.39</td>
+    </tr>
+  </tbody>
+  <tfoot>
+    <tr>
+      <td> </td>
+      <td><strong>Total</strong></td>
+      <td style="text-align: right"><strong>$6.14</strong></td>
+    </tr>
+  </tfoot>
+</table>
+
+<p>A table must have a body of one or more rows, but can optionally also have a header or footer.</p>
+
+<p>The cells in a column, including the header row cell, can either be aligned:</p>
+
+<ul>
+  <li>left,</li>
+  <li>right or</li>
+  <li>center.</li>
+</ul>
+
+<p>Most inline text formatting is available in table cells, block-level formatting are not.</p>
+
+<table>
+  <thead>
+    <tr>
+      <th>Default header</th>
+      <th style="text-align: left">Left header</th>
+      <th style="text-align: center">Center header</th>
+      <th style="text-align: right">Right header</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>Default</td>
+      <td style="text-align: left">Left</td>
+      <td style="text-align: center">Center</td>
+      <td style="text-align: right">Right</td>
+    </tr>
+    <tr>
+      <td><em>Italic</em></td>
+      <td style="text-align: left"><strong>Bold</strong></td>
+      <td style="text-align: center"><strong><em>Bold italic</em></strong></td>
+      <td style="text-align: right"><code class="highlighter-rouge">monospace</code></td>
+    </tr>
+    <tr>
+      <td><a href="#">link text</a></td>
+      <td style="text-align: left"><code class="highlighter-rouge">code</code></td>
+      <td style="text-align: center"><del>Strikeout</del></td>
+      <td style="text-align: right"><ins>Insertion<ins></ins></ins></td>
+    </tr>
+    <tr>
+      <td>line<br />break</td>
+      <td style="text-align: left">“Smart quotes”</td>
+      <td style="text-align: center"><mark>highlight</mark></td>
+      <td style="text-align: right"><span class="green">green</span></td>
+    </tr>
+    <tr>
+      <td>Footnote<sup id="fnref:2"><a href="#fn:2" class="footnote">2</a></sup></td>
+      <td style="text-align: left"><sub>subscript</sub></td>
+      <td style="text-align: center"><sup>superscript</sup></td>
+      <td style="text-align: right"><span class="red">red</span></td>
+    </tr>
+  </tbody>
+  <tfoot>
+    <tr>
+      <td>Footer row</td>
+      <td style="text-align: left"> </td>
+      <td style="text-align: center"> </td>
+      <td style="text-align: right"> </td>
+    </tr>
+  </tfoot>
+</table>
+
+<h3 id="theres-more-being-added-all-the-time">There’s more being added all the time</h3>
+
+<p>Checkout the <a href="https://github.com/johnotander/pixyll">Github repository</a> to request,
+or add, features.</p>
+
+<p>Happy writing.</p>
+
+<hr />
+
+<div class="footnotes">
+  <ol>
+    <li id="fn:1">
+      <p>Important information that may distract from the main text can go in footnotes. <a href="#fnref:1" class="reversefootnote">&#8617;</a></p>
+    </li>
+    <li id="fn:2">
+      <p>Footnotes will work in tables since they’re just links. <a href="#fnref:2" class="reversefootnote">&#8617;</a></p>
+    </li>
+  </ol>
+</div>
+
+                    ]]>
+                </content:encoded>
+                <guid isPermaLink="false">/jekyll/pixyll/2014/06/10/see-pixyll-in-action/</guid>
+                <description>
+                    
+                    See what the different elements looks like. Your markdown has never looked better. I promise.
+                    
+                </description>
+                <pubDate>Tue, 10 Jun 2014 08:31:19 -0400</pubDate>
+                <author></author>
+            </item>
+        
+    
+        
+            <item>
+                <title>So, What is Jekyll?</title>
+                <link>http://localhost:4000/jekyll/pixyll/2014/06/09/so-what-is-jekyll/</link>
+                <content:encoded>
+                    <![CDATA[
+                    <p>Jekyll is a tool for transforming your plain text into static websites and 
+blogs. It is simple, static, and blog-aware. Jekyll uses the 
+<a href="http://docs.shopify.com/themes/liquid-basics">Liquid</a> templating
+language and has builtin <a href="http://daringfireball.net/projects/markdown/">Markdown</a>
+and <a href="http://en.wikipedia.org/wiki/Textile_(markup_language)">Textile</a> support.</p>
+
+<p>It also ties in nicely to <a href="https://pages.github.com/">Github Pages</a>.</p>
+
+<p>Learn more about Jekyll on their <a href="http://jekyllrb.com/">website</a>.</p>
+
+                    ]]>
+                </content:encoded>
+                <guid isPermaLink="false">/jekyll/pixyll/2014/06/09/so-what-is-jekyll/</guid>
+                <description>
+                    
+                    Transform your plain text into static websites and blogs. Simple, static, and blog-aware.
+                    
+                </description>
+                <pubDate>Mon, 09 Jun 2014 08:32:18 -0400</pubDate>
+                <author></author>
+            </item>
+        
+    
+        
+            <item>
+                <title>Pixyll has Pagination</title>
+                <link>http://localhost:4000/jekyll/pixyll/2014/06/08/pixyll-has-pagination/</link>
+                <content:encoded>
+                    <![CDATA[
+                    <p>This is an empty post to illustrate the pagination component with Pixyll.</p>
+
+                    ]]>
+                </content:encoded>
+                <guid isPermaLink="false">/jekyll/pixyll/2014/06/08/pixyll-has-pagination/</guid>
+                <description>
+                    
+                    This is an empty post to illustrate the pagination component with Pixyll.
+                    
+                </description>
+                <pubDate>Sun, 08 Jun 2014 07:21:29 -0400</pubDate>
+                <author></author>
+            </item>
+        
+    
+  </channel>
+</rss>
