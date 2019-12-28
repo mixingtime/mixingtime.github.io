@@ -1,7 +1,6 @@
 # Site settings
 title:       Mixing Time
 email:       mixingtime01@gmail.com
-#author:      John Otander
 description: "A blog on machine learning."
 baseurl:     ""
 url:         "http://mixingtime.github.io"
