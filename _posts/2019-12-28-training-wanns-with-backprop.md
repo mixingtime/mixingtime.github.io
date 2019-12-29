@@ -15,7 +15,7 @@ The recent paper [*Weight Agnostic Neural Networks*](https://papers.nips.cc/pape
 WANNs are shown to perform reasonably well on several reinforcement learning tasks even though they're sparsely connected and use tied weights. 
 The paper further demonstrates the effectiveness of WANNs in classifying MNIST handwritten digits by reformulating the classification task as a reinforcement learning problem. 
 In particular, an ensemble of WANNs with tied weights performs as well as a standard neural network with thousands of parameters. 
-And when trained with a black-box optimizer called PEPG[^1], a single WANN is able to achieve a respectable test accuracy of 94.2%. 
+And when trained with a black-box optimizer called PEPG,[^1] a single WANN is able to achieve a respectable test accuracy of 94.2%. 
 
 
 I'm really excited about the paper: it not only speeds up neural architecture search by eliminating the inner optimization loop for weight training, but also brings to light the potential of sparse neural networks with minimal degrees of freedom in weights. I'm also curious that in the MNIST experiment, WANNs are trained with a black-box optimizer instead of the usual backpropagation even though the network architecture is fully differentiable. For this, the paper reports an interesting observation: training WANNs with backpropagation in the classification formulation does not fare as well as 
@@ -99,6 +99,23 @@ For now, the preliminary results shown above suggest that training of MNIST-WANN
 
 
 __Acknowledgement__: I'd like to thank the authors of the paper for generously open-sourcing their code.
+
+<ins>*Update (12/29/2019)*</ins>:
+I've tried to train MNIST-WANN for 20 more epochs (so 30 epochs in total). Below is the training progress over the 30 epochs:
+
+{:refdef: style="text-align: center;"}
+![Training/validation accuracy](/assets/accuracy.30.png)
+{: refdef}
+
+I also summarize the results for Adam at the 29th epoch (which achieves the highest validation accuracy) and those for SGD at the 30th epoch, averaged over 5 runs:
+
+| Optimizer| Training    | Validation|Testing|
+|:--------:|:-----------:|:---------:|:-----:|
+|      Adam|      94.2%  |     94.4% | 94.0% |
+|       SGD|      93.0%  |     93.6% | 93.2% |
+
+<br>
+In view of [the results of the 10th epoch](#accuracy), it appears that training MNIST-WANN for more epochs does help to ameliorate the underfitting issue and improves the test accuracy of Adam to 94%, close to the 94.2% of PEPG reported in the paper. The SGD-trained MNIST-WANN still underfits even after 30 epochs of training; on the other hand, the gap between training and validation accuracy narrows a bit, and the results become more stable after 20 epochs.
 
 ---
 
