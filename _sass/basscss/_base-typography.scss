@@ -38,8 +38,11 @@ ul {
   margin-bottom: $space-2;
 }
 
-p {
-  font-size: 0.92rem; /* Controls all p tags */
+p,
+dl,
+ol,
+ul {
+  font-size: 0.92rem; /* Controls fonts */
 }
 
 ol,
